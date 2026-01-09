@@ -7,7 +7,7 @@ from matplotlib.collections import LineCollection
 
 
 
-def emb_hmap(embeddings, title=None):
+def emb_hmap(embeddings, title=None, dist="cosine", plot=True):
     """
     Given a set of embeddings, compute and plot the heatmap of their pairwise similarities.
     Inputs:
@@ -16,12 +16,25 @@ def emb_hmap(embeddings, title=None):
     - Heatmap plot of pairwise similarities
     - Prints the minimum similarity value
     """
-    embeddings = embeddings / torch.norm(embeddings, dim=1, keepdim=True)
-    emb_h = torch.matmul(embeddings, embeddings.T)
-    sns.heatmap(np.abs(emb_h.numpy()), cmap='viridis', vmin=0, vmax=1)
-    print(f"Min_similarity: {np.abs(emb_h).min().item():.4f}")
-    if title: plt.title(title)
-    plt.show()
+    if dist=="cosine":
+        # embeddings = F.normalize(embeddings, p=2, dim=1)
+        embeddings = embeddings / torch.norm(embeddings, dim=1, keepdim=True)
+        emb_h = torch.matmul(embeddings, embeddings.T)
+        emb_h = torch.abs(emb_h)
+        vmin, vmax = 0, 1
+    elif dist=="l2":
+        emb_h = torch.cdist(embeddings, embeddings, p=2)
+        emb_h = - torch.abs(emb_h)
+        vmin, vmax = emb_h.min().item(), emb_h.max().item()
+    else:
+        raise ValueError("Unsupported distance metric. Use 'cosine' or 'l2'.")
+    
+    if plot:
+        sns.heatmap(emb_h.numpy(), cmap='viridis', vmin=vmin, vmax=vmax)
+        # print(f"Min_similarity: {np.abs(emb_h).min().item():.4f}")
+        if title: plt.title(title)
+        plt.show()
+    return np.abs(emb_h.numpy()), -torch.mean(emb_h).item(), torch.var(emb_h).item()
 
 
 
@@ -118,7 +131,7 @@ def visualize_similarities(anchor, data, img_anchor=None, imgs=None):
 
 
 
-def plot_rec(orig, recons):
+def plot_rec(orig, recons, save=False):
     """
     Given original and reconstructed images, plot them side by side for comparison.
     Inputs:
@@ -136,4 +149,7 @@ def plot_rec(orig, recons):
     plt.title("Reconstructed Image")
     plt.imshow(recons.squeeze().cpu(), cmap='gray')
     plt.axis('off')
-    plt.show()
+    if save:
+        plt.savefig("reconstruction_comparison.png")
+    else:
+        plt.show()

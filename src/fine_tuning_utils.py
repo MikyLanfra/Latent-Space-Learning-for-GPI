@@ -1,9 +1,9 @@
 import torch
 import numpy as np
 import torch.nn as nn
+from torch import optim
 
-
-def get_pos_neg_samples(dataset, add_steps=0):
+def get_pos_neg_samples(dataset, add_steps=0, mode='initial'):
     """
     Given a ZarrDataset, randomly select one episode to extract all its frames as positive samples and frames from other episodes as negative samples.
     Inputs:
@@ -17,9 +17,26 @@ def get_pos_neg_samples(dataset, add_steps=0):
     start, end = dataset.episode_starts[i], dataset.episode_ends[i]
     pos_indices = np.arange(start, end)
 
-    other_starts = np.delete(dataset.episode_starts, i)
-    neg_indices = (other_starts[:, None] + np.arange(add_steps + 1)).ravel()
-    neg_indices = neg_indices[neg_indices < len(dataset.z)]
+    if mode == 'initial':
+        other_starts = np.delete(dataset.episode_starts, i)
+        neg_indices = (other_starts[:, None] + np.arange(add_steps + 1)).ravel()
+        neg_indices = neg_indices[neg_indices < len(dataset.z)]
+
+    else:
+        checkpoints = dataset.episode_starts
+        checkpoints = np.append(checkpoints, len(dataset.z))  # Add end index for the last episode
+        num_episodes = len(checkpoints)
+        num_neg = num_episodes * add_steps  # Total number of negative samples to draw
+        min_ep_len = np.min(np.diff(checkpoints))  # Minimum episode length to avoid index errors
+        neg_indices = []
+        for i in range(num_neg):
+            while True:
+                ep_idx = np.random.randint(0, num_episodes-1)  # Random episode index
+                if ep_idx != i:  # Ensure it's not the same episode
+                    curr_len = checkpoints[ep_idx + 1] - checkpoints[ep_idx]
+                    j = np.random.randint(min_ep_len//4, 3*min_ep_len//4)
+                    neg_indices.append(checkpoints[ep_idx] + j)
+                    break
 
     return pos_indices, neg_indices
 
@@ -73,7 +90,7 @@ def temporal_weights(num_pos, lambda_, max_distance=None, device='cpu'):
 
 
 
-def compute_loss_epoch(model, dataset, lambda_, temp, device, max_distance=None, add_steps=0, uniform=False):
+def compute_loss_epoch(model, dataset, lambda_, temp, device, max_distance=None, add_steps=0, uniform=False, mode='initial'):
         """
         Computes the loss for one epoch using contrastive loss with temporal weighting.
     
@@ -90,7 +107,7 @@ def compute_loss_epoch(model, dataset, lambda_, temp, device, max_distance=None,
         """
         if model.embeddings is None: model.get_embeddings(dataset, device)
 
-        pos_idx, neg_idx = get_pos_neg_samples(dataset, add_steps=add_steps) # Get positive and negative samples
+        pos_idx, neg_idx = get_pos_neg_samples(dataset, add_steps=add_steps, mode=mode) # Get positive and negative samples
         pos = model.embeddings[pos_idx] # Positive samples
         neg = model.embeddings[neg_idx] # Negative samples
         pos = nn.functional.normalize(pos, dim=1) # Normalize positive samples
@@ -117,6 +134,19 @@ def compute_loss_epoch(model, dataset, lambda_, temp, device, max_distance=None,
         loss = -torch.sum((weights * log_prob)) / max_idx # Weighted loss computation
 
         return loss
+
+
+def train_loop(model, dataset, lambda_, temp, device, max_distance=None, add_steps=0, uniform=False, epochs=10, lr=1e-3):
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    for epoch in range(epochs):
+        model.train()
+        optimizer.zero_grad()
+        loss = compute_loss_epoch(model, dataset, lambda_, temp, device, max_distance, add_steps, uniform, mode='random')
+        loss.backward()
+        optimizer.step()
+        n = max(1, epochs // 10)  # Print progress every 10% of epochs
+        if epoch % n == 0 or epoch == epochs - 1: print(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item()}")
+
 
 
 if __name__ == "__main__":

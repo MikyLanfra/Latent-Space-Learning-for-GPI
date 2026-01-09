@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel
 from src.embedding_utils import generate_embeddings
+from transformers import InstructBlipProcessor, InstructBlipForConditionalGeneration
+from PIL import Image
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class DinoModel(nn.Module):
@@ -13,12 +15,37 @@ class DinoModel(nn.Module):
     def __init__(self, model_name):
         super(DinoModel, self).__init__()
         self.processor = AutoImageProcessor.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name).to(DEVICE)
         
     def forward(self, images):
         inputs = self.processor(images=images, return_tensors="pt").to(DEVICE)
         outputs = self.model(**inputs)       
         return outputs.pooler_output
+
+
+
+class BLIPModel(nn.Module):
+    def __init__(self, model_name, text_prompt="Where is the object in this image?"):
+        super(BLIPModel, self).__init__()
+        self.processor = InstructBlipProcessor.from_pretrained(model_name, use_fast=True)
+        self.model = InstructBlipForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16).to(DEVICE)
+        self.txt_prompt = text_prompt
+
+    def forward(self, images):
+        txt_prompt_batch = [self.txt_prompt] * len(images)
+        inputs = self.processor(images=images, text=txt_prompt_batch, return_tensors="pt").to(DEVICE)
+        image_embeds = self.model.vision_model(inputs.pixel_values, return_dict=True).last_hidden_state
+        qformer_input_ids = inputs.qformer_input_ids
+        query_tokens = self.model.query_tokens.expand(image_embeds.shape[0], -1, -1)
+        query_outputs = self.model.qformer(
+            input_ids=qformer_input_ids,
+            query_embeds=query_tokens,
+            encoder_hidden_states=image_embeds,
+            return_dict=True,
+        )
+        out = query_outputs.last_hidden_state
+        out = out[:,32:,:]
+        return torch.mean(out, dim=1)
 
 
 
@@ -72,7 +99,7 @@ class FineTunedEmbedding(nn.Module):
     def __init__(self, base_model, head_model):
         super(FineTunedEmbedding, self).__init__()
         self.base_model = base_model
-        self.base_model.eval()  # Freeze base model
+        # self.base_model.eval()  # Freeze base model
         self.head_model = head_model
         self.embeddings = None
     
@@ -89,6 +116,7 @@ class FineTunedEmbedding(nn.Module):
     
     def load_precomputed_embeddings(self, emb_path):
         self.embeddings = torch.load(emb_path)
+        self.embeddings = self.embeddings.to(DEVICE)
         return self.embeddings
     
 

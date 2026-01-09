@@ -28,7 +28,7 @@ class Encoder(nn.Module):
     """
     The Encoder (E) that maps a 3x96x96 frame to a low-dimensional latent vector (Z_DIM).
     """
-    def __init__(self, in_channels=3, z_dim=256, base_features=32):
+    def __init__(self, in_channels=3, z_dim=256, base_features=32, pool_output=(6,6)):
         """
         :param in_channels: 3 for RGB.
         :param z_dim: The final dimension of the latent vector (e.g., 256).
@@ -58,7 +58,9 @@ class Encoder(nn.Module):
         # 4. 12x12 -> 6x6 (Output Channels: f4=256)
         self.layer4 = self._make_downsample_block(f3, f4, stride=2)
 
-        self.flattened_size = f4 * 6 * 6
+        self.adaptive_pool = nn.AdaptiveAvgPool2d(pool_output)
+
+        self.flattened_size = f4 * pool_output[0] * pool_output[1]  # 256 * 6 * 6 = 9216
         
         self.fc_latent = nn.Sequential(
             nn.Linear(self.flattened_size, z_dim),
@@ -81,6 +83,7 @@ class Encoder(nn.Module):
         x = self.layer3(x)  # (B, 128, 12, 12)
         x = self.layer4(x)  # (B, 256, 6, 6)
         
+        x = self.adaptive_pool(x)  # (B, 256, 6, 6)
         # Flatten the spatial features
         x = x.view(x.size(0), -1) # (B, 9216)
         
@@ -97,7 +100,8 @@ class Decoder(nn.Module):
     The Decoder (D) that maps a low-dimensional latent vector (Z_DIM)
     back to a frame (C, 96, 96).
     """
-    def __init__(self, out_channels=3, z_dim=256, base_features=32):
+    def __init__(self, out_channels=3, z_dim=256, base_features=32, initial_shape=(6,6), out_shape=(96,96)):
+
         super().__init__()
         
         # Define the feature map counts (in reverse order of the encoder)
@@ -107,8 +111,10 @@ class Decoder(nn.Module):
         f4 = base_features * 8   # 256
         
         # Calculate the size to flatten back from (B, Z_DIM)
-        self.flattened_size = f4 * 6 * 6  # 256 * 6 * 6 = 9216
         self.z_dim = z_dim
+        self.initial_shape = initial_shape  # (6,6)
+        self.flattened_size = f4 * initial_shape[0] * initial_shape[1]  # 256 * 6 * 6 = 9216
+        self.out_shape = out_shape  # (96,96)
 
         # 1. Initial Expansion
         # Projects the latent vector back to the flattened feature map size
@@ -146,17 +152,17 @@ class Decoder(nn.Module):
 
         # 1. Expand and Reshape
         x = self.fc_expand(z)  # (B, 9216)
-        # Reshape to the starting feature map volume (B, 256, 6, 6)
-        x = x.view(-1, self.flattened_size // (6 * 6), 6, 6)
+        B = z.size(0)
+        H, W = self.initial_shape
+        x = x.view(B, -1, H, W)  # (B, 256, 6, 6)
         
         # 2. Sequential Upsampling
         x = self.layer4_up(x)  # (B, 128, 12, 12)
         x = self.layer3_up(x)  # (B, 64, 24, 24)
         x = self.layer2_up(x)  # (B, 32, 48, 48)
+        x = self.layer1_up(x)  # (B, 3, 96, 96)
         
-        # 3. Final Output
-        reconstructed_frame = self.layer1_up(x)  # (B, 3, 96, 96)
-        
+        reconstructed_frame = nn.functional.interpolate(x, size=self.out_shape, mode='bilinear', align_corners=False)
         return reconstructed_frame
 
 
@@ -190,7 +196,7 @@ class StandardAutoencoder(nn.Module):
     
 
 
-class TimeAwareAutoencoder(StandardAutoencoder):
+class BiLevelTimeAutoencoder(StandardAutoencoder):
     """
     Extends the Standard Autoencoder to handle pairs of consecutive frames,
     incorporating time-aware transformations in the latent space.
@@ -198,10 +204,9 @@ class TimeAwareAutoencoder(StandardAutoencoder):
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
         self.T1 = nn.Linear(encoder.z_dim, encoder.z_dim*2)
-        self.relu = nn.ReLU()
         self.T2 = nn.Linear(encoder.z_dim*2, encoder.z_dim*2)
-        self.relu = nn.ReLU()
         self.T3 = nn.Linear(encoder.z_dim*2, encoder.z_dim)
+        self.relu = nn.ReLU()
         self.MLP = nn.Sequential(
             self.T1,
             self.relu,
@@ -231,6 +236,38 @@ class TimeAwareAutoencoder(StandardAutoencoder):
         # Time-aware transformations
         z_t_pred = self.MLP(z_t)
         return z_t, x_t_prime, z_t_plus_1, z_t_pred, x_t_plus_1_prime
+    
+    
+
+class TimeConsistentAutoencoder(StandardAutoencoder):
+    """
+    Extends the Standard Autoencoder to handle pairs of consecutive frames,
+    incorporating time-aware transformations in the latent space.
+    """
+    def __init__(self, encoder, decoder):
+        super().__init__(encoder, decoder)
+
+
+    def forward(self, x_t, x_t_plus_1=None):
+        """
+        The forward pass for a pair of consecutive frames.
+        
+        :param x_t: Input frame at time t. Shape: (B, C, H, W)
+        :param x_t_plus_1: Input frame at time t+1. Shape: (B, C, H, W)
+        :returns: A tuple containing the latent vectors and reconstructed frames.
+        """
+        # Encode first frame
+        z_t = self.encoder(x_t)
+        x_t_prime = self.decoder(z_t)
+        if x_t_plus_1 is None:
+            return z_t, x_t_prime
+        
+        # Encode second frame
+        z_t_plus_1 = self.encoder(x_t_plus_1)
+        x_t_plus_1_prime = self.decoder(z_t_plus_1)
+        
+        # Time-aware transformations
+        return z_t, x_t_prime, z_t_plus_1, x_t_plus_1_prime
 
 
 if __name__ == "__main__":
