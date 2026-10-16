@@ -53,8 +53,9 @@ class ZarrPairwiseDataset(ZarrDataset):
         self.length = len(self.valid_anchors)
 
     def __getitem__(self, idx):
-        xi = super().__getitem__(idx)
-        xi1 = super().__getitem__(idx + 1)
+        anchor = self.valid_anchors[idx]  # frame index; never the last frame of an episode
+        xi = super().__getitem__(anchor)
+        xi1 = super().__getitem__(anchor + 1)
         return torch.stack([xi, xi1], dim=0)
     
 
@@ -74,9 +75,10 @@ class ZarrTripletDataset(ZarrPairwiseDataset):
         self.min_distance = min_distance
 
     def __getitem__(self, idx):
-        vid_idx = np.searchsorted(self.episode_ends, idx, side='right')
+        anchor = self.valid_anchors[idx]
+        vid_idx = np.searchsorted(self.episode_ends, anchor, side='right')
         idx_j = np.random.randint(self.episode_starts[vid_idx], self.episode_ends[vid_idx])
-        while abs(idx - idx_j) < self.min_distance:
+        while abs(anchor - idx_j) < self.min_distance:
             idx_j = np.random.randint(self.episode_starts[vid_idx], self.episode_ends[vid_idx])
         xi, xj = super().__getitem__(idx), self._preprocess(self.z[idx_j])
         return torch.stack([xi[0], xi[1], xj], dim=0)
