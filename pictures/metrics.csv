@@ -1,0 +1,17 @@
+method,group,split,n_episodes,ratio_mean,rho_mean,ratio_std,rho_std
+Raw pixels,Reference,train,200,0.3752,0.6941,0.033,0.1136
+Raw pixels,Reference,held-out,6,0.3752,0.7248,0.0426,0.0967
+Standard AE,Autoencoders,train,200,0.2663,0.7055,0.0368,0.1024
+Standard AE,Autoencoders,held-out,6,0.2724,0.732,0.0476,0.0774
+Time-consistent AE,Autoencoders,train,200,0.152,0.6367,0.0234,0.1241
+Time-consistent AE,Autoencoders,held-out,6,0.1513,0.6643,0.0262,0.1479
+Bilevel time AE,Autoencoders,train,200,0.2363,0.5564,0.0354,0.1176
+Bilevel time AE,Autoencoders,held-out,6,0.2355,0.5735,0.048,0.1092
+DINOv3 (frozen),Pretrained,train,200,0.3588,0.6002,0.0335,0.1233
+DINOv3 (frozen),Pretrained,held-out,6,0.3455,0.5607,0.0393,0.1396
+DINOv3 + contrastive head,Pretrained,train,200,0.3435,0.8292,0.0256,0.0909
+DINOv3 + contrastive head,Pretrained,held-out,6,0.356,0.7692,0.0144,0.1059
+"InstructBLIP, empty prompt",Multimodal,train,200,0.2381,0.483,0.0473,0.1498
+"InstructBLIP, empty prompt",Multimodal,held-out,6,0.2441,0.5314,0.0715,0.1423
+"InstructBLIP, task prompt",Multimodal,train,200,0.2423,0.4999,0.0333,0.1458
+"InstructBLIP, task prompt",Multimodal,held-out,6,0.258,0.5469,0.0581,0.1549

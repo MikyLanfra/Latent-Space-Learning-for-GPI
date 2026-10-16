@@ -7,9 +7,9 @@ The [Jupyter Notebook File](Notebook.ipynb) contains examples of the methods imp
 ## AutoEncoder Based Models
 The first class of models is given by AutoEncoder based models. For this class of models, other than applying the standard approach, I implemented two additional classes of models which I defined Time Consistent AutoEncoder (which adds the latent space distance between two consecutive embeddings to its optimization loss) and a BiLevel Time AutoEncoder (which instead defines a secondary Neural Network as a "fictional" time advance operator, and aims to minimize the difference between advancing in time and then embedding and viceversa).   
 
-The following plot summarizes the results on the PushT task, showing the strength of this approach compared to the standard one in terms of latent-space structure.  
+On held-out Push-T demonstrations, the time-consistency loss makes embedded trajectories about 44% smoother than the standard AE (smoothness ratio 0.15 vs 0.27, see [Evaluation](#evaluation)), at a small cost in time-ordering. The BiLevel model gives a smaller gain (0.24). The PCA projections below trace one held-out demonstration (colour = time):
 
-![alt text](pictures/autoencoders_results.png)
+![Latent trajectories of one held-out demonstration](pictures/trajectories.png)
 
 The implementations for these methods can be found in the [autoencoders](src/autoencoder.py) and [autoencoder training utils](src/autoencoder_training_utils.py) files.
 
@@ -20,20 +20,29 @@ In particular, my approach aims to perform fine-tuning with a small fine-tuning 
 
 My approach is based on contrastive learning and uses exponentially decaying weights in order to define positive pairs within the entire demonstrations, performing a temporal alignement of the embeddings in latent space.   
 
-Once again, the results are summarized in the following plot:
-
-![alt text](pictures/pretrained_results.png)
+The contrastive head does not make consecutive steps smoother, but it substantially improves temporal ordering: the Spearman correlation between latent distance and elapsed time goes from 0.56 (frozen DINOv3) to 0.77, the best of all methods and above raw pixels (0.73).
 
 The implementations for these methods can be found in the [embedding head](src/embedding_head.py) and [fine tuning utils](src/fine_tuning_utils.py) files.
 
 ## Multimodal Model Based Approaches
 The final approach explored uses Text-Vision multimodal models to extract prompt-guided embeddings using - once again - pretrained models. In this case, the supervision is performed at an high level using textual prompts to guide the vision model through cross-attention to extract more meaningful information from the images. 
 
-The following plot compares the results of an empty prompt with generic and task specific prompts:
+Compared to an empty prompt, the task-specific prompt gives no measurable change in either metric (ratio 0.24 → 0.26, ρ 0.53 → 0.55), so in this setting prompting alone does not add temporal structure.
 
-![alt text](pictures/multimodal_results.png)
+## Evaluation
+Both metrics are computed per demonstration and are invariant to rescaling the latent space:
+- **Smoothness ratio** = mean distance between consecutive embeddings / mean distance between all pairs of embeddings of the demonstration (lower = smoother).
+- **Time-order correlation** = Spearman ρ between latent distance and temporal distance |i − j| over all frame pairs (higher = latent distance tracks elapsed time).
 
+All models were trained on the first 200 demonstrations; the figure reports the 6 held-out ones (training demonstrations show the same ranking, see [metrics.csv](pictures/metrics.csv)). Raw pixels are included as a reference.
 
+![Metrics on held-out demonstrations](pictures/metrics.png)
+
+![Frames of the held-out demonstration](pictures/pusht_frames.png)
+
+To reproduce: `python evaluate_embeddings.py` (needs the Push-T zarr in `pusht/`); tests: `pytest tests`.
+
+> An earlier version of this README reported the mean/variance of all pairwise L2 distances on a single training demonstration. That quantity scales with the size of the latent space, so it rewarded embeddings that shrink rather than become smoother; it has been replaced by the scale-invariant metrics above.
 
 ## Bibliography
 
